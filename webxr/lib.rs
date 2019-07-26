@@ -9,3 +9,6 @@ pub mod glwindow;
 
 #[cfg(feature = "headless")]
 pub mod headless;
+
+#[cfg(feature = "hololens")]
+pub mod hololens;
