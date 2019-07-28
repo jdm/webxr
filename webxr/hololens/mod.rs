@@ -26,11 +26,12 @@ use webxr_api::Display;
 use webxr_api::Error;
 use webxr_api::Event;
 use webxr_api::EventBuffer;
-use webxr_api::EventCallback;
 use webxr_api::Floor;
 use webxr_api::Frame;
 use webxr_api::InputSource;
 use webxr_api::Native;
+use webxr_api::Quitter;
+use webxr_api::Sender;
 use webxr_api::Session;
 use webxr_api::SessionBuilder;
 use webxr_api::SessionMode;
@@ -109,7 +110,7 @@ impl Device for GlWindowDevice {
         }
     }
 
-    fn render_animation_frame(&mut self, texture_id: u32, size: UntypedSize2D<i32>, sync: GLsync) {
+    fn render_animation_frame(&mut self, texture_id: u32, size: UntypedSize2D<i32>, sync: Option<GLsync>) {
         self.window.make_current();
 
         let width = size.width as GLsizei;
@@ -118,8 +119,10 @@ impl Device for GlWindowDevice {
 
         self.gl.clear_color(0.2, 0.3, 0.3, 1.0);
         self.gl.clear(gl::COLOR_BUFFER_BIT);
-        self.gl.wait_sync(sync, 0, gl::TIMEOUT_IGNORED);
-        debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        if let Some(sync) = sync {
+            self.gl.wait_sync(sync, 0, gl::TIMEOUT_IGNORED);
+            debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        }
 
         self.gl
             .bind_framebuffer(gl::READ_FRAMEBUFFER, self.read_fbo);
@@ -154,12 +157,8 @@ impl Device for GlWindowDevice {
         vec![]
     }
 
-    fn set_event_callback(&mut self, callback: Box<dyn EventCallback>) {
-        self.events.upgrade(callback)
-    }
-
-    fn connected(&mut self) -> bool {
-        self.connected
+    fn set_event_dest(&mut self, dest: Sender<Event>) {
+        self.events.upgrade(dest)
     }
 
     fn quit(&mut self) {
@@ -167,6 +166,10 @@ impl Device for GlWindowDevice {
             self.connected = false;
             self.events.callback(Event::SessionEnd);
         }
+    }
+    
+    fn set_quitter(&mut self, _: Quitter) {
+        //XXXjdm probably need some mechanism to signal that the window is closed/view is lost?
     }
 }
 
