@@ -348,6 +348,19 @@ impl Device for OpenXrDevice {
         if let Some(sync) = sync {
             self.gl.wait_sync(sync, 0, gl::TIMEOUT_IGNORED);
         }
+        
+        let mut value = [0];
+        unsafe {
+            self.gl.get_integer_v(gl::TEXTURE_BINDING_2D, &mut value);
+        }
+        assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        let old_texture = value[0] as gl::GLuint;
+        unsafe {
+            self.gl.get_integer_v(gl::FRAMEBUFFER_BINDING, &mut value);
+        }
+        assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        let old_framebuffer = value[0] as gl::GLuint;
+
         let fb = self.read_fbo;
         self.gl.bind_framebuffer(gl::FRAMEBUFFER, fb);
         self.gl.bind_texture(gl::TEXTURE_2D, texture_id);
@@ -378,6 +391,14 @@ impl Device for OpenXrDevice {
         let left_data = flip_vec(&left_data, size.width as usize / 2, size.height as usize);
         let right_data = flip_vec(&right_data, size.width as usize / 2, size.height as usize);
         self.gl.bind_framebuffer(gl::FRAMEBUFFER, 0);
+        
+        self.gl.bind_texture(gl::TEXTURE_2D, old_texture);
+        assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
+        assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+
+        
+        
         let texture_desc = d3d11::D3D11_TEXTURE2D_DESC {
             Width: (size.width / 2) as u32,
             Height: size.height as u32,
