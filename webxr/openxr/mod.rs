@@ -20,6 +20,7 @@ use openxr::{
 };
 use std::rc::Rc;
 use std::{mem, ptr};
+use surfman::Surface;
 use webxr_api;
 use webxr_api::Device;
 use webxr_api::Discovery;
@@ -146,6 +147,7 @@ struct OpenXrDevice {
     resource: ComPtr<dxgi::IDXGIResource>,
     device_context: ComPtr<d3d11::ID3D11DeviceContext>,
     device: ComPtr<d3d11::ID3D11Device>,
+    surfman: Option<(surfman::Device, surfman::Context)>,
 
     // input
     action_set: ActionSet,
@@ -263,6 +265,8 @@ impl OpenXrDevice {
             format,
         );
 
+        let surfman = unsafe { surfman::Device::from_current_context().ok() };
+
         // input
 
         let action_set = instance.create_action_set("hands", "Hands", 0).unwrap();
@@ -303,6 +307,7 @@ impl OpenXrDevice {
             resource,
             device_context,
             device,
+            surfman,
 
             action_set,
             right_hand,
@@ -443,12 +448,14 @@ impl Device for OpenXrDevice {
         Some(frame)
     }
 
-    fn render_animation_frame(
-        &mut self,
-        texture_id: u32,
-        size: UntypedSize2D<i32>,
-        sync: Option<GLsync>,
-    ) {
+    fn render_animation_frame(&mut self, surface: Surface) -> Surface {
+        let (device, mut context) = self.surfman.take().unwrap();
+        let size = surface.size();
+        let surface_texture = device
+            .create_surface_texture(&mut context, surface)
+            .unwrap();
+        let texture_id = surface_texture.gl_texture();
+
         fn flip_vec(v: &[u8], width: usize, height: usize) -> Vec<u8> {
             let mut flipped = Vec::with_capacity(v.len());
             let stride = width * 4;
@@ -457,9 +464,6 @@ impl Device for OpenXrDevice {
                 flipped.extend_from_slice(&v[start..start + stride]);
             }
             flipped
-        }
-        if let Some(sync) = sync {
-            self.gl.wait_sync(sync, 0, gl::TIMEOUT_IGNORED);
         }
 
         // Store existing GL bindings to be restored later.
@@ -480,7 +484,7 @@ impl Device for OpenXrDevice {
         self.gl.framebuffer_texture_2d(
             gl::FRAMEBUFFER,
             gl::COLOR_ATTACHMENT0,
-            gl::TEXTURE_2D,
+            device.surface_gl_texture_target(),
             texture_id,
             0,
         );
@@ -639,6 +643,11 @@ impl Device for OpenXrDevice {
                     ])],
             )
             .unwrap();
+        let surface = device
+            .destroy_surface_texture(&mut context, surface_texture)
+            .unwrap();
+        self.surfman = Some((device, context));
+        surface
     }
 
     fn initial_inputs(&self) -> Vec<InputSource> {

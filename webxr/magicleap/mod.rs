@@ -19,7 +19,6 @@ use euclid::Vector3D;
 use gleam::gl;
 use gleam::gl::GLint;
 use gleam::gl::GLsizei;
-use gleam::gl::GLsync;
 use gleam::gl::GLuint;
 use gleam::gl::Gl;
 
@@ -399,16 +398,7 @@ impl Device for MagicLeapDevice {
         })
     }
 
-    fn render_animation_frame(
-        &mut self,
-        texture_id: u32,
-        size: UntypedSize2D<i32>,
-        sync: Option<GLsync>,
-    ) {
-        if let Some(sync) = sync {
-            self.gl.wait_sync(sync, 0, gl::TIMEOUT_IGNORED);
-        }
-
+    fn render_animation_frame(&mut self, texture_id: u32, size: UntypedSize2D<i32>) {
         if let Err(err) = self.stop_frame(texture_id, size) {
             error!("Failed to stop frame ({:?}).", err);
         }

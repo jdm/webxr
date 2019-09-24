@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use gleam::gl::GLsync;
-
 use webxr_api::Device;
 use webxr_api::Error;
 use webxr_api::Event;
@@ -46,6 +44,8 @@ use std::{mem, ptr};
 use super::discovery::SendPtr;
 use super::input::GoogleVRController;
 
+use surfman::Surface;
+
 #[cfg(target_os = "android")]
 use crate::jni_utils::JNIScope;
 #[cfg(target_os = "android")]
@@ -81,6 +81,7 @@ pub(crate) struct GoogleVRDevice {
     fbo_texture: u32,
     presenting: bool,
     frame_bound: bool,
+    surfman: Option<(surfman::Device, surfman::Context)>,
 }
 
 impl GoogleVRDevice {
@@ -117,6 +118,7 @@ impl GoogleVRDevice {
             fbo_texture: 0,
             presenting: false,
             frame_bound: false,
+            surfman: None,
         };
         unsafe {
             device.init();
@@ -156,6 +158,7 @@ impl GoogleVRDevice {
             fbo_texture: 0,
             presenting: false,
             frame_bound: false,
+            surfman: None,
         };
         unsafe {
             device.init();
@@ -201,6 +204,8 @@ impl GoogleVRDevice {
         gvr::gvr_refresh_viewer_profile(self.ctx);
         // Initializes gvr necessary GL-related objects.
         gvr::gvr_initialize_gl(self.ctx);
+
+        self.surfman = surfman::Device::from_current_context().ok();
 
         // GVR_FEATURE_MULTIVIEW must be checked after gvr_initialize_gl is called or the function will crash.
         if self.multiview && !gvr::gvr_is_feature_supported(self.ctx, GVR_FEATURE_MULTIVIEW as i32)
@@ -430,7 +435,12 @@ impl GoogleVRDevice {
         self.frame = gvr::gvr_swap_chain_acquire_frame(self.swap_chain);
     }
 
-    fn render_layer(&mut self, texture_id: u32, texture_size: DefaultSize2D<i32>) {
+    fn render_layer(
+        &mut self,
+        texture_id: u32,
+        texture_size: DefaultSize2D<i32>,
+        texture_target: u32,
+    ) {
         if self.frame.is_null() {
             warn!("null frame when calling render_layer");
             return;
@@ -448,7 +458,7 @@ impl GoogleVRDevice {
                 gl::FramebufferTexture2D(
                     gl::FRAMEBUFFER,
                     gl::COLOR_ATTACHMENT0,
-                    gl::TEXTURE_2D,
+                    texture_target,
                     texture_id,
                     0,
                 );
@@ -548,21 +558,21 @@ impl Device for GoogleVRDevice {
         })
     }
 
-    fn render_animation_frame(
-        &mut self,
-        texture_id: u32,
-        texture_size: DefaultSize2D<i32>,
-        sync: Option<GLsync>,
-    ) {
-        self.render_layer(texture_id, texture_size);
+    fn render_animation_frame(&mut self, surface: Surface) -> Surface {
+        let (device, mut context) = self.surfman.take().unwrap();
+        let texture_size = surface.size();
+        let surface_texture = device
+            .create_surface_texture(&mut context, surface)
+            .unwrap();
+        let texture_id = surface_texture.gl_texture();
+        let texture_target = device.surface_gl_texture_target();
+        self.render_layer(texture_id, texture_size, texture_target);
         self.submit_frame();
-        if let Some(sync) = sync {
-            unsafe {
-                // XXXManishearth we really should figure out how
-                // to use gleam here
-                gl::WaitSync(sync as *const _, 0, gl::TIMEOUT_IGNORED);
-            }
-        }
+        let surface = device
+            .destroy_surface_texture(&mut context, surface_texture)
+            .unwrap();
+        self.surfman = Some((device, context));
+        surface
     }
 
     fn initial_inputs(&self) -> Vec<InputSource> {
