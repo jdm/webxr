@@ -207,6 +207,12 @@ impl Device for GlWindowDevice {
     }
 }
 
+impl Drop for GlWindowDevice {
+    fn drop(&mut self) {
+        let _ = self.device.destroy_context(&mut self.context);
+    }
+}
+
 impl GlWindowDevice {
     fn new(gl: Rc<dyn Gl>, window: Rc<dyn GlWindow>) -> Result<GlWindowDevice, Error> {
         window.make_current();
