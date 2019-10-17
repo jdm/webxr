@@ -606,6 +606,14 @@ impl Device for GoogleVRDevice {
     }
 }
 
+impl Drop for GoogleVRDevice {
+    fn drop(&mut self) {
+        if let Some((ref device, ref mut context)) = self.surfman {
+            let _ = device.destroy_context(context);
+        }
+    }
+}
+
 #[inline]
 fn fov_to_projection_matrix<T, U>(
     fov: &gvr::gvr_rectf,
