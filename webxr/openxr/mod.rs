@@ -689,6 +689,14 @@ impl Device for OpenXrDevice {
     }
 }
 
+impl Drop for OpenXrDevice {
+    fn drop(&mut self) {
+        if let Some((ref device, ref mut context)) = self.surfman {
+            let _ = device.destroy_context(context);
+        }
+    }
+}
+
 fn get_matching_adapter(
     requirements: &Requirements,
 ) -> Result<ComPtr<dxgi::IDXGIAdapter1>, String> {
