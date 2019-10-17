@@ -1,5 +1,4 @@
 use crate::utils::ClipPlanes;
-use euclid::default::Size2D as UntypedSize2D;
 use euclid::Point2D;
 use euclid::Rect;
 use euclid::RigidTransform3D;
@@ -7,7 +6,7 @@ use euclid::Rotation3D;
 use euclid::Size2D;
 use euclid::Transform3D;
 use euclid::Vector3D;
-use gleam::gl::{self, GLenum, GLsync, GLuint, Gl};
+use gleam::gl::{self, GLenum, GLuint, Gl};
 use log::warn;
 use openxr::d3d::{Requirements, SessionCreateInfo, D3D11};
 use openxr::sys::platform::ID3D11Device;
