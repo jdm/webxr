@@ -566,7 +566,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.height,
             size.width / 2,
             0,
-            gl::COLOR_BUFFER_BIT,
+            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
             gl::NEAREST,
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
@@ -590,7 +590,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.height,
             size.width / 2,
             0,
-            gl::COLOR_BUFFER_BIT,
+            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
             gl::NEAREST,
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
@@ -602,6 +602,51 @@ impl DeviceAPI<Surface> for OpenXrDevice {
 
         self.left_swapchain.release_image().unwrap();
         self.right_swapchain.release_image().unwrap();
+
+        let left_depth_subimage = openxr::SwapchainSubImage::new()
+            .swapchain(&self.left_swapchain)
+            .image_array_index(0)
+            .image_rect(openxr::Rect2Di {
+                offset: openxr::Offset2Di { x: 0, y: 0 },
+                extent: self.left_extent,
+            });
+        let left_view_subimage = openxr::SwapchainSubImage::new()
+            .swapchain(&self.left_swapchain)
+            .image_array_index(0)
+            .image_rect(openxr::Rect2Di {
+                offset: openxr::Offset2Di { x: 0, y: 0 },
+                extent: self.left_extent,
+            });
+        
+        let left_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
+            .min_depth(0.) //TODO
+            .max_depth(1.) //TODO
+            .near_z(self.clip_planes.near)
+            .far_z(self.clip_planes.far)
+            .sub_image(left_depth_subimage);
+
+        let right_depth_subimage = openxr::SwapchainSubImage::new()
+            .swapchain(&self.right_swapchain)
+            .image_array_index(0)
+            .image_rect(openxr::Rect2Di {
+                offset: openxr::Offset2Di { x: 0, y: 0 },
+                extent: self.right_extent,
+            });
+        let right_view_subimage = openxr::SwapchainSubImage::new()
+            .swapchain(&self.right_swapchain)
+            .image_array_index(0)
+            .image_rect(openxr::Rect2Di {
+                offset: openxr::Offset2Di { x: 0, y: 0 },
+                extent: self.right_extent,
+            });
+
+        let right_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
+            .min_depth(0.) //TODO
+            .max_depth(1.) //TODO
+            .near_z(self.clip_planes.near)
+            .far_z(self.clip_planes.far)
+            .sub_image(right_depth_subimage);
+
         self.frame_stream
             .end(
                 self.frame_state.predicted_display_time,
@@ -613,28 +658,13 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                         openxr::CompositionLayerProjectionView::new()
                             .pose(self.openxr_views[0].pose)
                             .fov(self.openxr_views[0].fov)
-                            .sub_image(
-                                // XXXManishearth is this correct?
-                                openxr::SwapchainSubImage::new()
-                                    .swapchain(&self.left_swapchain)
-                                    .image_array_index(0)
-                                    .image_rect(openxr::Rect2Di {
-                                        offset: openxr::Offset2Di { x: 0, y: 0 },
-                                        extent: self.left_extent,
-                                    }),
-                            ),
+                            .sub_image(left_view_subimage)
+                            .depth_info_layer(&left_depth_info),
                         openxr::CompositionLayerProjectionView::new()
                             .pose(self.openxr_views[1].pose)
                             .fov(self.openxr_views[1].fov)
-                            .sub_image(
-                                openxr::SwapchainSubImage::new()
-                                    .swapchain(&self.right_swapchain)
-                                    .image_array_index(0)
-                                    .image_rect(openxr::Rect2Di {
-                                        offset: openxr::Offset2Di { x: 0, y: 0 },
-                                        extent: self.right_extent,
-                                    }),
-                            ),
+                            .sub_image(right_view_subimage)
+                            .depth_info_layer(&right_depth_info),
                     ])],
             )
             .unwrap();
