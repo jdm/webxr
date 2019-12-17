@@ -73,6 +73,7 @@ fn create_instance() -> Result<Instance, String> {
 
     let exts = ExtensionSet {
         khr_d3d11_enable: true,
+        khr_composition_layer_depth: true,
         ..Default::default()
     };
 
@@ -88,7 +89,8 @@ fn pick_format(formats: &[dxgiformat::DXGI_FORMAT]) -> dxgiformat::DXGI_FORMAT {
     warn!("Available formats: {:?}", formats);
     for format in formats {
         match *format {
-            dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM => return *format,
+            dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB => return *format,
+            //dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM => return *format,
             //dxgiformat::DXGI_FORMAT_R8G8B8A8_UNORM => return *format,
             f => {
                 warn!("Backend requested unsupported format {:?}", f);
@@ -265,7 +267,10 @@ impl OpenXrDevice {
         let format = pick_format(&formats);
         let swapchain_create_info = SwapchainCreateInfo {
             create_flags: SwapchainCreateFlags::EMPTY,
-            usage_flags: SwapchainUsageFlags::COLOR_ATTACHMENT | SwapchainUsageFlags::SAMPLED,
+            usage_flags: SwapchainUsageFlags::COLOR_ATTACHMENT |
+                //SwapchainUsageFlags::DEPTH_STENCIL_ATTACHMENT |
+                SwapchainUsageFlags::SAMPLED, //|
+                //SwapchainUsageFlags::TRANSFER_DST,
             format,
             sample_count: 1,
             // XXXManishearth what if the recommended widths are different?
@@ -566,7 +571,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.height,
             size.width / 2,
             0,
-            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
+            gl::COLOR_BUFFER_BIT/* | gl::DEPTH_BUFFER_BIT*/,
             gl::NEAREST,
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
@@ -590,7 +595,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.height,
             size.width / 2,
             0,
-            gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
+            gl::COLOR_BUFFER_BIT/* | gl::DEPTH_BUFFER_BIT*/,
             gl::NEAREST,
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
@@ -603,13 +608,13 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         self.left_swapchain.release_image().unwrap();
         self.right_swapchain.release_image().unwrap();
 
-        let left_depth_subimage = openxr::SwapchainSubImage::new()
+        /*let left_depth_subimage = openxr::SwapchainSubImage::new()
             .swapchain(&self.left_swapchain)
             .image_array_index(0)
             .image_rect(openxr::Rect2Di {
                 offset: openxr::Offset2Di { x: 0, y: 0 },
                 extent: self.left_extent,
-            });
+            });*/
         let left_view_subimage = openxr::SwapchainSubImage::new()
             .swapchain(&self.left_swapchain)
             .image_array_index(0)
@@ -618,20 +623,20 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                 extent: self.left_extent,
             });
         
-        let left_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
+        /*let left_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
             .min_depth(0.) //TODO
             .max_depth(1.) //TODO
             .near_z(self.clip_planes.near)
             .far_z(self.clip_planes.far)
-            .sub_image(left_depth_subimage);
+            .sub_image(left_depth_subimage);*/
 
-        let right_depth_subimage = openxr::SwapchainSubImage::new()
+        /*let right_depth_subimage = openxr::SwapchainSubImage::new()
             .swapchain(&self.right_swapchain)
             .image_array_index(0)
             .image_rect(openxr::Rect2Di {
                 offset: openxr::Offset2Di { x: 0, y: 0 },
                 extent: self.right_extent,
-            });
+            });*/
         let right_view_subimage = openxr::SwapchainSubImage::new()
             .swapchain(&self.right_swapchain)
             .image_array_index(0)
@@ -640,12 +645,12 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                 extent: self.right_extent,
             });
 
-        let right_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
+        /*let right_depth_info = openxr::CompositionLayerDepthInfoKHR::new()
             .min_depth(0.) //TODO
             .max_depth(1.) //TODO
             .near_z(self.clip_planes.near)
             .far_z(self.clip_planes.far)
-            .sub_image(right_depth_subimage);
+            .sub_image(right_depth_subimage);*/
 
         self.frame_stream
             .end(
@@ -658,13 +663,13 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                         openxr::CompositionLayerProjectionView::new()
                             .pose(self.openxr_views[0].pose)
                             .fov(self.openxr_views[0].fov)
-                            .sub_image(left_view_subimage)
-                            .depth_info_layer(&left_depth_info),
+                            .sub_image(left_view_subimage),
+                            //.depth_info_layer(&left_depth_info),
                         openxr::CompositionLayerProjectionView::new()
                             .pose(self.openxr_views[1].pose)
                             .fov(self.openxr_views[1].fov)
-                            .sub_image(right_view_subimage)
-                            .depth_info_layer(&right_depth_info),
+                            .sub_image(right_view_subimage),
+                            //.depth_info_layer(&right_depth_info),
                     ])],
             )
             .unwrap();
