@@ -88,7 +88,8 @@ fn pick_format(formats: &[dxgiformat::DXGI_FORMAT]) -> dxgiformat::DXGI_FORMAT {
     warn!("Available formats: {:?}", formats);
     for format in formats {
         match *format {
-            dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM => return *format,
+            //dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM => return *format,
+            dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM_SRGB => return *format,
             //dxgiformat::DXGI_FORMAT_R8G8B8A8_UNORM => return *format,
             f => {
                 warn!("Backend requested unsupported format {:?}", f);
