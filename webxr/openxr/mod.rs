@@ -19,6 +19,7 @@ use openxr::{
     Session, Space, Swapchain, SwapchainCreateFlags, SwapchainCreateInfo, SwapchainUsageFlags,
     Vector3f, ViewConfigurationType,
 };
+use std::sync::Arc;
 use std::rc::Rc;
 use surfman::platform::generic::universal::context::Context as SurfmanContext;
 use surfman::platform::generic::universal::device::Device as SurfmanDevice;
@@ -52,13 +53,15 @@ use input::OpenXRInput;
 
 const HEIGHT: f32 = 1.0;
 
+pub type GlFactory = Arc<dyn Fn() -> Rc<dyn Gl> + Send + Sync>;
+
 pub struct OpenXrDiscovery {
-    gl: Rc<dyn Gl>,
+    gl_factory: GlFactory,
 }
 
 impl OpenXrDiscovery {
-    pub fn new(gl: Rc<dyn Gl>) -> Self {
-        Self { gl }
+    pub fn new(gl_factory: GlFactory) -> Self {
+        Self { gl_factory }
     }
 }
 
@@ -108,8 +111,12 @@ impl DiscoveryAPI<SwapChains> for OpenXrDiscovery {
     ) -> Result<WebXrSession, Error> {
         let instance = create_instance().map_err(|e| Error::BackendSpecific(e))?;
         if self.supports_session(mode) {
-            let gl = self.gl.clone();
-            xr.run_on_main_thread(move || OpenXrDevice::new(gl, instance))
+            //let gl = self.gl.clone();
+            let factory = self.gl_factory.clone();
+            xr.spawn(move || {
+                let gl = factory();
+                OpenXrDevice::new(gl, instance)
+            })
         } else {
             Err(Error::NoMatchingDevice)
         }
