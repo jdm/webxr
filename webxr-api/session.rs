@@ -272,7 +272,8 @@ where
     fn run_one_frame(&mut self) {
         let frame_count = self.frame_count;
         while frame_count == self.frame_count && self.running {
-            if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
+            //if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
+            if let Ok(msg) = self.receiver.try_recv() {
                 self.running = self.handle_msg(msg);
             } else {
                 break;
