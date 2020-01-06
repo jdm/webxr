@@ -23,6 +23,7 @@ use std::rc::Rc;
 use surfman::platform::generic::universal::context::Context as SurfmanContext;
 use surfman::platform::generic::universal::device::Device as SurfmanDevice;
 use surfman::platform::generic::universal::surface::Surface;
+use surfman::platform::generic::universal::surface::SurfaceTexture;
 use webxr_api;
 use webxr_api::util::{self, ClipPlanes};
 use webxr_api::DeviceAPI;
@@ -139,9 +140,11 @@ struct OpenXrDevice {
     left_swapchain: Swapchain<D3D11>,
     left_image: u32,
     left_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
+    left_surface_textures: Vec<SurfaceTexture>,
     right_swapchain: Swapchain<D3D11>,
     right_image: u32,
     right_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
+    right_surface_textures: Vec<SurfaceTexture>,
     surfman: (SurfmanDevice, SurfmanContext),
 
     // input
@@ -284,12 +287,45 @@ impl OpenXrDevice {
         let left_images = left_swapchain
             .enumerate_images()
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
+        let (mut device, mut context) = surfman.extract();
+        let size = Size2D::new(
+            left_view_configuration.recommended_image_rect_width as i32,
+            left_view_configuration.recommended_image_rect_height as i32,
+        );
+        let left_surface_textures = left_images.iter().map(|&texture| {
+            unsafe {
+                let surface = device
+                    .create_surface_from_texture(
+                        &context,
+                        &size,
+                        texture,
+                    )
+                    .expect("couldn't create left surface");
+                device
+                    .create_surface_texture(&mut context, surface)
+                    .expect("couldn't create left surface texture")
+            }
+        }).collect();
         let right_swapchain = session
             .create_swapchain(&swapchain_create_info)
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
         let right_images = right_swapchain
             .enumerate_images()
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
+        let right_surface_textures = right_images.iter().map(|&texture| {
+            unsafe {
+                let surface = device
+                    .create_surface_from_texture(
+                        &context,
+                        &size,
+                        texture,
+                    )
+                    .expect("couldn't create left surface");
+                device
+                    .create_surface_texture(&mut context, surface)
+                    .expect("couldn't create left surface texture")
+            }
+        }).collect();
 
         // input
 
@@ -326,10 +362,12 @@ impl OpenXrDevice {
             left_swapchain,
             right_swapchain,
             left_images,
+            left_surface_textures,
             right_images,
+            right_surface_textures,
             left_image: 0,
             right_image: 0,
-            surfman: surfman.extract(),
+            surfman: (device, context),
 
             action_set,
             right_hand,
@@ -537,7 +575,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let left_image = self.left_images[self.left_image as usize];
         let right_image = self.right_images[self.right_image as usize];
 
-        let left_surface = unsafe {
+        /*let left_surface = unsafe {
             device
                 .create_surface_from_texture(
                     &context,
@@ -548,10 +586,10 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         };
         let left_surface_texture = device
             .create_surface_texture(context, left_surface)
-            .expect("couldn't create left surface texture");
-        let left_texture_id = left_surface_texture.gl_texture();
+            .expect("couldn't create left surface texture");*/
+        let left_texture_id = self.left_surface_textures[self.left_image as usize].gl_texture();
 
-        let right_surface = unsafe {
+        /*let right_surface = unsafe {
             device
                 .create_surface_from_texture(
                     &context,
@@ -562,8 +600,8 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         };
         let right_surface_texture = device
             .create_surface_texture(context, right_surface)
-            .expect("couldn't create right surface texture");
-        let right_texture_id = right_surface_texture.gl_texture();
+            .expect("couldn't create right surface texture");*/
+        let right_texture_id = self.right_surface_textures[self.right_image as usize].gl_texture();
 
         self.gl
             .bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.write_fbo);
@@ -664,15 +702,15 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let surface = device
             .destroy_surface_texture(context, surface_texture)
             .unwrap();
-        let left_surface = device
+        /*let left_surface = device
             .destroy_surface_texture(context, left_surface_texture)
             .unwrap();
-        device.destroy_surface(context, left_surface).unwrap();
+        device.destroy_surface(context, left_surface).unwrap();*/
 
-        let right_surface = device
+        /*let right_surface = device
             .destroy_surface_texture(context, right_surface_texture)
             .unwrap();
-        device.destroy_surface(context, right_surface).unwrap();
+        device.destroy_surface(context, right_surface).unwrap();*/
 
         surface
     }
@@ -719,6 +757,20 @@ impl DeviceAPI<Surface> for OpenXrDevice {
 
 impl Drop for OpenXrDevice {
     fn drop(&mut self) {
+        let (device, context) = (&mut self.surfman.0, &mut self.surfman.1);
+        for surface_texture in self.left_surface_textures.drain(..).chain(self.right_surface_textures.drain(..)) {
+            let surface = device.destroy_surface_texture(context, surface_texture).unwrap();
+            device.destroy_surface(context, surface).unwrap();
+        };
+                /*let left_surface = device
+            .destroy_surface_texture(context, left_surface_texture)
+            .unwrap();
+        device.destroy_surface(context, left_surface).unwrap();*/
+
+        /*let right_surface = device
+            .destroy_surface_texture(context, right_surface_texture)
+            .unwrap();
+        device.destroy_surface(context, right_surface).unwrap();*/
         let _ = self.surfman.0.destroy_context(&mut self.surfman.1);
     }
 }
