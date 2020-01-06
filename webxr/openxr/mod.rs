@@ -655,7 +655,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
 
-        self.gl.flush();
+        //self.gl.flush();
 
         // Restore old GL bindings.
         self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
