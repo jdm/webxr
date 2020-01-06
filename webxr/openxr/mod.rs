@@ -416,11 +416,30 @@ impl DeviceAPI<Surface> for OpenXrDevice {
     }
 
     fn wait_for_animation_frame(&mut self) -> Option<Frame> {
-        if !self.handle_openxr_events() {
-            // Session is not running anymore.
-            return None;
+        loop {
+            if !self.handle_openxr_events() {
+                // Session is not running anymore.
+                return None;
+            }
+            self.frame_state = self.frame_waiter.wait().expect("error waiting for frame");
+
+            // XXXManishearth this code should perhaps be in wait_for_animation_frame,
+            // but we then get errors that wait_image was called without a release_image()
+            self.frame_stream
+                .begin()
+                .expect("failed to start frame stream");
+                
+            if self.frame_state.should_render {
+                break;
+            }
+            
+            self.frame_stream.end(
+                self.frame_state.predicted_display_time,
+                EnvironmentBlendMode::ADDITIVE,
+                &[],
+            ).unwrap();
         }
-        self.frame_state = self.frame_waiter.wait().expect("error waiting for frame");
+
         let time_ns = time::precise_time_ns();
         // XXXManishearth should we check frame_state.should_render?
         let (_view_flags, views) = self
@@ -505,12 +524,6 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             texture_id,
             0,
         );
-
-        // XXXManishearth this code should perhaps be in wait_for_animation_frame,
-        // but we then get errors that wait_image was called without a release_image()
-        self.frame_stream
-            .begin()
-            .expect("failed to start frame stream");
 
         self.left_image = self.left_swapchain.acquire_image().unwrap();
         self.left_swapchain
