@@ -296,8 +296,8 @@ where
         let frame_count = self.frame_count;
         let start_run = time::precise_time_ns();
         while frame_count == self.frame_count && self.running {
-            //if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
-            if let Ok(msg) = self.receiver.try_recv() {
+            if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
+            //if let Ok(msg) = self.receiver.try_recv() {
                 self.running = self.handle_msg(msg);
             } else {
                 break;
