@@ -19,11 +19,14 @@ use openxr::{
     Session, Space, Swapchain, SwapchainCreateFlags, SwapchainCreateInfo, SwapchainUsageFlags,
     Vector3f, ViewConfigurationType,
 };
+use std::collections::HashMap;
 use std::rc::Rc;
 use surfman::platform::generic::universal::context::Context as SurfmanContext;
 use surfman::platform::generic::universal::device::Device as SurfmanDevice;
 use surfman::platform::generic::universal::surface::Surface;
 use surfman::platform::generic::universal::surface::SurfaceTexture;
+use surfman::platform::windows::angle::surface::SurfacelessTexture;
+use surfman::SurfaceID;
 use webxr_api;
 use webxr_api::util::{self, ClipPlanes};
 use webxr_api::DeviceAPI;
@@ -146,6 +149,7 @@ struct OpenXrDevice {
     right_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
     right_surface_textures: Vec<SurfaceTexture>,
     surfman: (SurfmanDevice, SurfmanContext),
+    surface_texture_cache: HashMap<SurfaceID, Option<SurfacelessTexture>>,
 
     // input
     action_set: ActionSet,
@@ -368,6 +372,7 @@ impl OpenXrDevice {
             left_image: 0,
             right_image: 0,
             surfman: (device, context),
+            surface_texture_cache: HashMap::new(),
 
             action_set,
             right_hand,
@@ -543,8 +548,18 @@ impl DeviceAPI<Surface> for OpenXrDevice {
     fn render_animation_frame(&mut self, surface: Surface) -> Surface {
         let device = &mut self.surfman.0;
         let context = &mut self.surfman.1;
-        let size = device.surface_info(&surface).size;
-        let surface_texture = device.create_surface_texture(context, surface).unwrap();
+        let info = device.surface_info(&surface);
+        let size = info.size;
+        let surface_texture = match self.surface_texture_cache.get_mut(&info.id) {
+            Some(surfaceless) => {
+                //println!("getting cached texture for {:?}", info.id);
+                SurfaceTexture::from_surfaceless(surface, surfaceless.take().unwrap())
+            }
+            None => {
+                //println!("creating texture for {:?}", info.id);
+                device.create_surface_texture(context, surface).unwrap()
+            }
+        };
         let texture_id = surface_texture.gl_texture();
 
         let mut value = [0];
@@ -700,9 +715,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             )
             .unwrap();
 
-        let surface = device
+        /*let surface = device
             .destroy_surface_texture(context, surface_texture)
-            .unwrap();
+            .unwrap();*/
         /*let left_surface = device
             .destroy_surface_texture(context, left_surface_texture)
             .unwrap();
@@ -713,6 +728,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             .unwrap();
         device.destroy_surface(context, right_surface).unwrap();*/
 
+        let (surfaceless, surface) = surface_texture.into_surfaceless();
+        //println!("storing cached texture for {:?}", info.id);
+        self.surface_texture_cache.insert(info.id, Some(surfaceless));
         surface
     }
 
@@ -759,6 +777,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
 impl Drop for OpenXrDevice {
     fn drop(&mut self) {
         let (device, context) = (&mut self.surfman.0, &mut self.surfman.1);
+        // FIXME: leaking the cached surfaceless textures because we don't have surfaces
         for surface_texture in self.left_surface_textures.drain(..).chain(self.right_surface_textures.drain(..)) {
             let surface = device.destroy_surface_texture(context, surface_texture).unwrap();
             device.destroy_surface(context, surface).unwrap();
