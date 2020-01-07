@@ -18,9 +18,10 @@ use openxr::{
     CompositionLayerProjection, Entry, EnvironmentBlendMode, ExtensionSet, Extent2Di, FormFactor,
     Fovf, FrameState, FrameStream, FrameWaiter, Instance, Posef, Quaternionf, ReferenceSpaceType,
     Session, Space, Swapchain, SwapchainCreateFlags, SwapchainCreateInfo, SwapchainUsageFlags,
-    Vector3f, ViewConfigurationType,
+    Vector3f, ViewConfigurationType, InstanceExtensions,
 };
 use std::collections::HashMap;
+use std::ffi::{c_void, CStr};
 use std::{mem, ptr};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -78,6 +79,27 @@ impl OpenXrDiscovery {
     }
 }
 
+extern "system" fn debug_callback(
+    sev: openxr::sys::DebugUtilsMessageSeverityFlagsEXT,
+    msg_type: openxr::sys::DebugUtilsMessageTypeFlagsEXT,
+    data: *const openxr::sys::DebugUtilsMessengerCallbackDataEXT,
+    user_data: *mut c_void,
+) -> openxr::sys::Bool32 {
+    unsafe {
+        let message_id = CStr::from_ptr((*data).message_id);
+        let message = CStr::from_ptr((*data).message);
+        let function = CStr::from_ptr((*data).message);
+        println!(
+            "{:?} {:?} {} - {}: {}",
+            sev, msg_type,
+            function.to_string_lossy(),
+            message_id.to_string_lossy(),
+            message.to_string_lossy(),
+        );
+        false.into()
+    }
+}
+
 fn create_instance() -> Result<Instance, String> {
     let entry = Entry::load().map_err(|e| format!("{:?}", e))?;
     let app_info = ApplicationInfo {
@@ -89,12 +111,32 @@ fn create_instance() -> Result<Instance, String> {
 
     let exts = ExtensionSet {
         khr_d3d11_enable: true,
+        ext_debug_utils: true,
         ..Default::default()
     };
 
     entry
         .create_instance(&app_info, &exts)
         .map_err(|e| format!("{:?}", e))
+        .map(|instance| {
+            let extensions = unsafe { InstanceExtensions::load(&entry, instance.as_raw(), &exts).expect("couldn't load extensions") };
+            if let Some(debug_utils) = extensions.ext_debug_utils {
+                use openxr::sys::{DebugUtilsMessageTypeFlagsEXT as Type, DebugUtilsMessageSeverityFlagsEXT as Severity};
+                let create_info = openxr::sys::DebugUtilsMessengerCreateInfoEXT {
+                    ty: openxr::sys::DebugUtilsMessengerCreateInfoEXT::TYPE,
+                    next: ptr::null(),
+                    message_severities: Severity::VERBOSE | Severity::INFO | Severity::WARNING | Severity::ERROR,
+                    message_types: Type::GENERAL | Type::VALIDATION | Type::PERFORMANCE | Type::CONFORMANCE,
+                    user_callback: Some(debug_callback),
+                    user_data: ptr::null_mut(),
+                };
+                let mut messenger = openxr::sys::DebugUtilsMessengerEXT::NULL;
+                let result = unsafe { (debug_utils.create_debug_utils_messenger)(instance.as_raw(), &create_info, &mut messenger) };
+                assert_eq!(result, openxr::sys::Result::SUCCESS);
+            }
+
+            instance
+        })
 }
 
 fn pick_format(formats: &[dxgiformat::DXGI_FORMAT]) -> dxgiformat::DXGI_FORMAT {
