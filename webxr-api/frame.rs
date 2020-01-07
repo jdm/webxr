@@ -30,6 +30,8 @@ pub struct Frame {
 
     /// Value of time::precise_time_ns() when frame was obtained
     pub time_ns: u64,
+    
+    pub sent_time: u64,
 }
 
 #[derive(Clone, Debug)]

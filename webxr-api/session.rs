@@ -33,6 +33,16 @@ use serde::{Deserialize, Serialize};
 // How long to wait for an rAF.
 static TIMEOUT: Duration = Duration::from_millis(5);
 
+trait Foo {
+    fn to_ms(&self) -> f64;
+}
+
+impl Foo for u64 {
+    fn to_ms(&self) -> f64 {
+        *self as f64 / 1000000.
+    }
+}
+
 /// https://www.w3.org/TR/webxr/#xrsessionmode-enum
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "ipc", derive(Serialize, Deserialize))]
@@ -58,7 +68,7 @@ enum SessionMsg {
     SetEventDest(Sender<Event>),
     UpdateClipPlanes(/* near */ f32, /* far */ f32),
     StartRenderLoop,
-    RenderAnimationFrame,
+    RenderAnimationFrame(u64),
     Quit,
 }
 
@@ -126,7 +136,7 @@ impl Session {
     }
 
     pub fn render_animation_frame(&mut self) {
-        let _ = self.sender.send(SessionMsg::RenderAnimationFrame);
+        let _ = self.sender.send(SessionMsg::RenderAnimationFrame(time::precise_time_ns()));
     }
 
     pub fn end_session(&mut self) {
@@ -232,21 +242,34 @@ where
                 let _ = self.frame_sender.send(frame);
             }
             SessionMsg::UpdateClipPlanes(near, far) => self.device.update_clip_planes(near, far),
-            SessionMsg::RenderAnimationFrame => {
+            SessionMsg::RenderAnimationFrame(sent_time) => {
                 self.frame_count += 1;
+                let mut render_start = None;
                 if let Some(ref swap_chain) = self.swap_chain {
                     if let Some(surface) = swap_chain.take_surface() {
+                        //println!("!!! raf render {}", Instant::now());
+                        render_start = Some(time::precise_time_ns());
+                        println!("!!! raf transmitted {}ms", (render_start.unwrap() - sent_time).to_ms());
                         let surface = self.device.render_animation_frame(surface);
                         swap_chain.recycle_surface(surface);
                     }
                 }
-                let frame = match self.device.wait_for_animation_frame() {
+                let wait_start = time::precise_time_ns();
+                if let Some(render_start) = render_start {
+                    println!("!!! raf render {}", (wait_start - render_start).to_ms());
+                }
+                //println!("!!! raf wait {}", wait_start);
+                let mut frame = match self.device.wait_for_animation_frame() {
                     Some(frame) => frame,
                     None => {
                         warn!("Device stopped providing frames, exiting");
                         return false;
                     }
                 };
+                let wait_end = time::precise_time_ns();
+                println!("!!! raf wait {}", (wait_end - wait_start).to_ms());
+                //println!("!!! raf trigger {:?}", );
+                frame.sent_time = wait_end;
                 let _ = self.frame_sender.send(frame);
             }
             SessionMsg::Quit => {
@@ -271,6 +294,7 @@ where
 {
     fn run_one_frame(&mut self) {
         let frame_count = self.frame_count;
+        let start_run = time::precise_time_ns();
         while frame_count == self.frame_count && self.running {
             //if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
             if let Ok(msg) = self.receiver.try_recv() {
@@ -279,6 +303,8 @@ where
                 break;
             }
         }
+        let end_run = time::precise_time_ns();
+        println!("!!! run_one_frame {}ms", (end_run - start_run).to_ms());
     }
 
     fn running(&self) -> bool {
