@@ -11,6 +11,7 @@ use euclid::Vector3D;
 use gleam::gl::{self, GLuint, Gl};
 use log::warn;
 use openxr::d3d::{SessionCreateInfo, D3D11};
+use openxr::sys::platform::ID3D11Device;
 use openxr::Graphics;
 use openxr::{
     self, ActionSet, ActiveActionSet, ApplicationInfo, CompositionLayerFlags,
@@ -19,6 +20,8 @@ use openxr::{
     Session, Space, Swapchain, SwapchainCreateFlags, SwapchainCreateInfo, SwapchainUsageFlags,
     Vector3f, ViewConfigurationType,
 };
+use std::mem;
+use std::ptr;
 use std::rc::Rc;
 use surfman::platform::generic::universal::context::Context as SurfmanContext;
 use surfman::platform::generic::universal::device::Device as SurfmanDevice;
@@ -46,6 +49,11 @@ use webxr_api::TargetRayMode;
 use webxr_api::View;
 use webxr_api::Views;
 use winapi::shared::dxgiformat;
+use winapi::shared::dxgitype;
+use winapi::shared::winerror::S_OK;
+use winapi::um::d3d11::{self, ID3D11DeviceContext};
+use winapi::Interface;
+use wio::com::ComPtr;
 
 mod input;
 use input::OpenXRInput;
@@ -143,6 +151,8 @@ struct OpenXrDevice {
     right_image: u32,
     right_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
     surfman: (SurfmanDevice, SurfmanContext),
+    device_context: ComPtr<ID3D11DeviceContext>,
+    format: dxgiformat::DXGI_FORMAT,
 
     // input
     action_set: ActionSet,
@@ -200,6 +210,11 @@ impl OpenXrDevice {
             SurfmanDevice::from_current_context().expect("Failed to create graphics context!")
         };
         let device = surfman.0.d3d11_device();
+        let mut device_context = ptr::null_mut();
+        unsafe {
+            device.GetImmediateContext(&mut device_context);
+        }
+        let device_context = unsafe { ComPtr::from_raw(device_context) };
         let surfman = AutoDestroyContext::new(surfman);
 
         let (session, mut frame_waiter, frame_stream) = unsafe {
@@ -330,6 +345,8 @@ impl OpenXrDevice {
             left_image: 0,
             right_image: 0,
             surfman: surfman.extract(),
+            device_context,
+            format,
 
             action_set,
             right_hand,
@@ -486,17 +503,17 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let device = &mut self.surfman.0;
         let context = &mut self.surfman.1;
         let size = device.surface_info(&surface).size;
-        let surface_texture = device.create_surface_texture(context, surface).unwrap();
-        let texture_id = surface_texture.gl_texture();
+        //let surface_texture = device.create_surface_texture(context, surface).unwrap();
+        //let texture_id = surface_texture.gl_texture();
 
-        let mut value = [0];
+        /*let mut value = [0];
         unsafe {
             self.gl.get_integer_v(gl::FRAMEBUFFER_BINDING, &mut value);
         }
-        let old_framebuffer = value[0] as gl::GLuint;
+        let old_framebuffer = value[0] as gl::GLuint;*/
 
         // Bind the completed WebXR frame to the read framebuffer.
-        self.gl
+        /*self.gl
             .bind_framebuffer(gl::READ_FRAMEBUFFER, self.read_fbo);
         self.gl.framebuffer_texture_2d(
             gl::READ_FRAMEBUFFER,
@@ -504,7 +521,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             device.surface_gl_texture_target(),
             texture_id,
             0,
-        );
+        );*/
 
         // XXXManishearth this code should perhaps be in wait_for_animation_frame,
         // but we then get errors that wait_image was called without a release_image()
@@ -524,7 +541,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let left_image = self.left_images[self.left_image as usize];
         let right_image = self.right_images[self.right_image as usize];
 
-        let left_surface = unsafe {
+        /*let left_surface = unsafe {
             device
                 .create_surface_from_texture(
                     &context,
@@ -607,7 +624,74 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         self.gl.flush();
 
         // Restore old GL bindings.
-        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
+        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);*/
+
+       let texture_desc = d3d11::D3D11_TEXTURE2D_DESC {
+            Width: (size.width / 2) as u32,
+            Height: size.height as u32,
+            Format: self.format,
+            MipLevels: 1,
+            ArraySize: 1,
+            SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: d3d11::D3D11_USAGE_DEFAULT,
+            BindFlags: d3d11::D3D11_BIND_RENDER_TARGET | d3d11::D3D11_BIND_SHADER_RESOURCE,
+            CPUAccessFlags: 0,
+            MiscFlags: d3d11::D3D11_RESOURCE_MISC_SHARED,
+        };
+        let byte_len = (size.width as usize / 2) * size.height as usize * mem::size_of::<u32>();
+        let mut left_data = vec![0xFF; byte_len];
+        let mut init = d3d11::D3D11_SUBRESOURCE_DATA {
+            pSysMem: left_data.as_ptr() as *const _,
+            SysMemPitch: (size.width / 2) as u32 * mem::size_of::<u32>() as u32,
+            SysMemSlicePitch: byte_len as u32,
+        };
+        let mut d3dtex_ptr = ptr::null_mut();
+        let d3d_device = device.d3d11_device();
+        let hr = unsafe { d3d_device.CreateTexture2D(&texture_desc, &init, &mut d3dtex_ptr) };
+        let solid_texture = unsafe { ComPtr::from_raw(d3dtex_ptr) };
+        let solid_resource = solid_texture.up::<d3d11::ID3D11Resource>();
+        assert_eq!(hr, S_OK);
+
+        let b = d3d11::D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: (size.width / 2) as u32,
+            bottom: size.height as u32,
+            back: 1,
+        };
+       unsafe {
+            // from_raw adopts instead of retaining, so we need to manually addref
+            // alternatively we can just forget after the CopySubresourceRegion call,
+            // since these images are guaranteed to live at least as long as the frame
+            let left_resource = ComPtr::from_raw(left_image).up::<d3d11::ID3D11Resource>();
+            mem::forget(left_resource.clone());
+            let right_resource = ComPtr::from_raw(right_image).up::<d3d11::ID3D11Resource>();
+            mem::forget(right_resource.clone());
+            self.device_context.CopySubresourceRegion(
+                left_resource.as_raw(),
+                0,
+                0,
+                0,
+                0,
+                solid_resource.as_raw(),
+                0,
+                &b,
+            );
+            self.device_context.CopySubresourceRegion(
+                right_resource.as_raw(),
+                0,
+                0,
+                0,
+                0,
+                solid_resource.as_raw(),
+                0,
+                &b,
+            );
+        }
 
         self.left_swapchain.release_image().unwrap();
         self.right_swapchain.release_image().unwrap();
@@ -648,7 +732,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             )
             .unwrap();
 
-        let surface = device
+        /*let surface = device
             .destroy_surface_texture(context, surface_texture)
             .unwrap();
         let left_surface = device
@@ -659,7 +743,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let right_surface = device
             .destroy_surface_texture(context, right_surface_texture)
             .unwrap();
-        device.destroy_surface(context, right_surface).unwrap();
+        device.destroy_surface(context, right_surface).unwrap();*/
 
         surface
     }
