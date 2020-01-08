@@ -701,7 +701,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let d3d11_device = device.d3d11_device();
 
         let mut u: d3d11::D3D11_RENDER_TARGET_VIEW_DESC_u = Default::default();
-        u.Texture2D_mut().MipSlice = 0;
+        unsafe {
+            u.Texture2D_mut().MipSlice = 0;
+        }
         let desc = d3d11::D3D11_RENDER_TARGET_VIEW_DESC {
             Format: self.format,
             ViewDimension: d3d11::D3D11_RTV_DIMENSION_TEXTURE2D,
@@ -709,18 +711,24 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         };
 
         let mut left_render_target_view_ptr = ptr::null_mut();
-        let hr = d3d11_device.CreateRenderTargetView(left_resource.as_raw(), &desc, &mut left_render_target_view_ptr);
-        assert_eq!(hr, S_OK);
-        let left_render_target_view = unsafe { ComPtr::from_raw(render_target_view_ptr) };
+        unsafe {
+            let hr = d3d11_device.CreateRenderTargetView(left_resource.as_raw(), &desc, &mut left_render_target_view_ptr);
+            assert_eq!(hr, S_OK);
+        }
+        let left_render_target_view = unsafe { ComPtr::from_raw(left_render_target_view_ptr) };
 
         let mut right_render_target_view_ptr = ptr::null_mut();
-        let hr = d3d11_device.CreateRenderTargetView(right_resource.as_raw(), &desc, &mut right_render_target_view_ptr);
-        assert_eq!(hr, S_OK);
-        let right_render_target_view = unsafe { ComPtr::from_raw(render_target_view_ptr) };
+        unsafe {
+            let hr = d3d11_device.CreateRenderTargetView(right_resource.as_raw(), &desc, &mut right_render_target_view_ptr);
+            assert_eq!(hr, S_OK);
+        }
+        let right_render_target_view = unsafe { ComPtr::from_raw(right_render_target_view_ptr) };
 
         let color = [1.0, 1.0, 1.0, 1.0];
-        self.device_context.ClearRenderTargetView(left_render_target_view.as_raw(), &color);
-        self.device_context.ClearRenderTargetView(right_render_target_view.as_raw(), &color);
+        unsafe {
+            self.device_context.ClearRenderTargetView(left_render_target_view.as_raw(), &color);
+            self.device_context.ClearRenderTargetView(right_render_target_view.as_raw(), &color);
+        }
 
         self.left_swapchain.release_image().unwrap();
         self.right_swapchain.release_image().unwrap();
