@@ -129,7 +129,8 @@ impl DiscoveryAPI<SwapChains> for OpenXrDiscovery {
             device.destroy_context(&mut context);
 
             let factory = self.gl_factory.clone();
-            xr.spawn(move || {
+            //xr.spawn(move || {
+            xr.run_on_main_thread(move || {
                 let gl = factory();
                 OpenXrDevice::new(gl, instance, context_descriptor)
             })
@@ -643,20 +644,6 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             .expect("couldn't create left surface texture");
         let left_texture_id = left_surface_texture.gl_texture();
 
-        let right_surface = unsafe {
-            device
-                .create_surface_from_texture(
-                    &context,
-                    &Size2D::new(size.width / 2, size.height),
-                    right_image,
-                )
-                .expect("couldn't create right surface")
-        };
-        let right_surface_texture = device
-            .create_surface_texture(context, right_surface)
-            .expect("couldn't create right surface texture");
-        let right_texture_id = right_surface_texture.gl_texture();
-
         self.gl
             .bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.write_fbo);
             
@@ -685,6 +672,27 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
 
+        device.make_context_current(&context).unwrap();        
+        let left_surface = device
+            .destroy_surface_texture(context, left_surface_texture)
+            .unwrap();
+        device.destroy_surface(context, left_surface).unwrap();
+
+        device.make_context_current(&context).unwrap();        
+        let right_surface = unsafe {
+            device
+                .create_surface_from_texture(
+                    &context,
+                    &Size2D::new(size.width / 2, size.height),
+                    right_image,
+                )
+                .expect("couldn't create right surface")
+        };
+        let right_surface_texture = device
+            .create_surface_texture(context, right_surface)
+            .expect("couldn't create right surface texture");
+        let right_texture_id = right_surface_texture.gl_texture();
+
         // Bind the right eye's texture to the draw framebuffer.
         self.gl.framebuffer_texture_2d(
             gl::DRAW_FRAMEBUFFER,
@@ -694,8 +702,6 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             0,
         );
         
-        self.gl.clear(gl::COLOR_BUFFER_BIT);
-
         // Blit the appropriate rectangle from the WebXR texture to the d3d texture.
         self.gl.blit_framebuffer(
             size.width / 2,
@@ -711,7 +717,17 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
 
-        self.gl.flush();
+        let right_surface = device
+            .destroy_surface_texture(context, right_surface_texture)
+            .unwrap();
+        device.destroy_surface(context, right_surface).unwrap();
+
+        //self.gl.flush();
+
+        device.make_context_current(&context).unwrap();
+        let surface = device
+            .destroy_surface_texture(context, surface_texture)
+            .unwrap();
 
         // Restore old GL bindings.
         self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
@@ -754,19 +770,6 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                     ])],
             )
             .unwrap();
-
-        let surface = device
-            .destroy_surface_texture(context, surface_texture)
-            .unwrap();
-        let left_surface = device
-            .destroy_surface_texture(context, left_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, left_surface).unwrap();
-
-        let right_surface = device
-            .destroy_surface_texture(context, right_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, right_surface).unwrap();
 
         surface
     }
