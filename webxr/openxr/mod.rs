@@ -173,8 +173,8 @@ impl DiscoveryAPI<SwapChains> for OpenXrDiscovery {
             device.destroy_context(&mut context);
 
             let factory = self.gl_factory.clone();
-            //xr.spawn(move || {
-            xr.run_on_main_thread(move || {
+            xr.spawn(move || {
+            //xr.run_on_main_thread(move || {
                 let gl = factory();
                 OpenXrDevice::new(gl, instance, context_descriptor)
             })
@@ -208,14 +208,14 @@ struct OpenXrDevice {
     left_swapchain: Swapchain<D3D11>,
     left_image: u32,
     left_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
-    //left_surface_textures: Vec<SurfaceTexture>,
+    left_surface_textures: Vec<SurfaceTexture>,
     right_swapchain: Swapchain<D3D11>,
     right_image: u32,
     right_images: Vec<<D3D11 as Graphics>::SwapchainImage>,
-    //right_surface_textures: Vec<SurfaceTexture>,
+    right_surface_textures: Vec<SurfaceTexture>,
     surfman: (SurfmanDevice, SurfmanContext),
     surface_texture_cache: HashMap<SurfaceID, Option<SurfacelessTexture>>,
-    device_context: ComPtr<ID3D11DeviceContext>,
+    //device_context: ComPtr<ID3D11DeviceContext>,
 
     // input
     action_set: ActionSet,
@@ -310,7 +310,7 @@ fn init_device_for_adapter(
             D3D_DRIVER_TYPE_UNKNOWN,
             ptr::null_mut(),
             // add d3d11::D3D11_CREATE_DEVICE_DEBUG below for debug output
-            d3d11::D3D11_CREATE_DEVICE_BGRA_SUPPORT | d3d11::D3D11_CREATE_DEVICE_DEBUG,
+            d3d11::D3D11_CREATE_DEVICE_BGRA_SUPPORT /*| d3d11::D3D11_CREATE_DEVICE_DEBUG*/,
             feature_levels.as_ptr(),
             feature_levels.len() as u32,
             d3d11::D3D11_SDK_VERSION,
@@ -340,12 +340,12 @@ impl OpenXrDevice {
         let requirements = D3D11::requirements(&instance, system)
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
 
-        /*let adapter = get_matching_adapter(&requirements).map_err(|e| Error::BackendSpecific(e))?;
+        let adapter = get_matching_adapter(&requirements).map_err(|e| Error::BackendSpecific(e))?;
         let feature_levels = select_feature_levels(&requirements);
         let (d3d11_device, device_context) = init_device_for_adapter(adapter, &feature_levels).map_err(Error::BackendSpecific)?;
         let mut device = SurfmanDevice::from_d3d11_device(d3d11_device.clone(), D3D_DRIVER_TYPE_UNKNOWN);
         let context = device.create_context(&context_descriptor).map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
-        device.make_context_current(&context);*/
+        device.make_context_current(&context);
 
         let read_fbo = gl.gen_framebuffers(1)[0];
         debug_assert_eq!(gl.get_error(), gl::NO_ERROR);
@@ -356,17 +356,17 @@ impl OpenXrDevice {
         // Get the current surfman device and extract it's D3D device. This will ensure
         // that the OpenXR runtime's texture will be shareable with surfman's surfaces.
         //let surfman = unsafe {
-        let (device, mut context) = unsafe {
+       /* let (device, mut context) = unsafe {
             SurfmanDevice::from_current_context().expect("Failed to create graphics context!")
-        };
-        let d3d11_device = device.d3d11_device();
+        };*/
+        //let d3d11_device = device.d3d11_device();
         let surfman = AutoDestroyContext::new((device, context));
-        let device = d3d11_device.clone();
+        /*let device = d3d11_device.clone();
         let mut device_context = ptr::null_mut();
         unsafe {
         d3d11_device.GetImmediateContext(&mut device_context);
         }
-        let device_context = unsafe { ComPtr::from_raw(device_context) };
+        let device_context = unsafe { ComPtr::from_raw(device_context) };*/
 
         let (session, mut frame_waiter, frame_stream) = unsafe {
             instance
@@ -451,11 +451,11 @@ impl OpenXrDevice {
             .enumerate_images()
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
         let (mut device, mut context) = surfman.extract();
-        /*let size = Size2D::new(
+        let size = Size2D::new(
             left_view_configuration.recommended_image_rect_width as i32,
             left_view_configuration.recommended_image_rect_height as i32,
-        );*/
-        /*let left_surface_textures = left_images.iter().map(|&texture| {
+        );
+        let left_surface_textures = left_images.iter().map(|&texture| {
             unsafe {
                 let surface = device
                     .create_surface_from_texture(
@@ -468,14 +468,14 @@ impl OpenXrDevice {
                     .create_surface_texture(&mut context, surface)
                     .expect("couldn't create left surface texture")
             }
-        }).collect();*/
+        }).collect();
         let right_swapchain = session
             .create_swapchain(&swapchain_create_info)
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
         let right_images = right_swapchain
             .enumerate_images()
             .map_err(|e| Error::BackendSpecific(format!("{:?}", e)))?;
-        /*let right_surface_textures = right_images.iter().map(|&texture| {
+        let right_surface_textures = right_images.iter().map(|&texture| {
             unsafe {
                 let surface = device
                     .create_surface_from_texture(
@@ -488,7 +488,7 @@ impl OpenXrDevice {
                     .create_surface_texture(&mut context, surface)
                     .expect("couldn't create left surface texture")
             }
-        }).collect();*/
+        }).collect();
 
         // input
 
@@ -525,14 +525,14 @@ impl OpenXrDevice {
             left_swapchain,
             right_swapchain,
             left_images,
-            //left_surface_textures,
+            left_surface_textures,
             right_images,
-            //right_surface_textures,
+            right_surface_textures,
             left_image: 0,
             right_image: 0,
             surfman: (device, context),
             surface_texture_cache: HashMap::new(),
-            device_context,
+            //device_context,
 
             action_set,
             right_hand,
@@ -711,7 +711,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         device.make_context_current(&context);
         let info = device.surface_info(&surface);
         let size = info.size;
-        /*let surface_texture = match self.surface_texture_cache.get_mut(&info.id) {
+        let surface_texture = match self.surface_texture_cache.get_mut(&info.id) {
             Some(surfaceless) => {
                 //println!("getting cached texture for {:?}", info.id);
                 SurfaceTexture::from_surfaceless(surface, surfaceless.take().unwrap())
@@ -721,7 +721,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
                 device.create_surface_texture(context, surface).unwrap()
             }
         };
-        let texture_id = surface_texture.gl_texture();*/
+        let texture_id = surface_texture.gl_texture();
 
         let mut value = [0];
         unsafe {
@@ -730,7 +730,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let old_framebuffer = value[0] as gl::GLuint;
 
         // Bind the completed WebXR frame to the read framebuffer.
-        /*self.gl
+        self.gl
             .bind_framebuffer(gl::READ_FRAMEBUFFER, self.read_fbo);
         self.gl.framebuffer_texture_2d(
             gl::READ_FRAMEBUFFER,
@@ -738,7 +738,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             device.surface_gl_texture_target(),
             texture_id,
             0,
-        );*/
+        );
 
         self.left_image = self.left_swapchain.acquire_image().unwrap();
         self.left_swapchain
@@ -763,11 +763,11 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         };
         let left_surface_texture = device
             .create_surface_texture(context, left_surface)
-            .expect("couldn't create left surface texture");
-        //let left_texture_id = self.left_surface_textures[self.left_image as usize].gl_texture();
-        let left_texture_id = left_surface_texture.gl_texture();
+            .expect("couldn't create left surface texture");*/
+        let left_texture_id = self.left_surface_textures[self.left_image as usize].gl_texture();
+        //let left_texture_id = left_surface_texture.gl_texture();
 
-        let right_surface = unsafe {
+        /*let right_surface = unsafe {
             device
                 .create_surface_from_texture(
                     &context,
@@ -778,9 +778,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         };
         let right_surface_texture = device
             .create_surface_texture(context, right_surface)
-            .expect("couldn't create right surface texture");
-        let right_texture_id = right_surface_texture.gl_texture();
-        //let right_texture_id = self.right_surface_textures[self.right_image as usize].gl_texture();
+            .expect("couldn't create right surface texture");*/
+        //let right_texture_id = right_surface_texture.gl_texture();
+        let right_texture_id = self.right_surface_textures[self.right_image as usize].gl_texture();
 
         self.gl
             .bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.write_fbo);
@@ -802,13 +802,19 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.width / 2,
             size.height,
             0,
-            size.height,
+            0,//size.height,
             size.width / 2,
-            0,
+            size.height,
             gl::COLOR_BUFFER_BIT,
             gl::NEAREST,
         );
         debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+
+        /*let left_surface = device
+            .destroy_surface_texture(context, left_surface_texture)
+            .unwrap();*/
+
+        //device.make_context_current(&context);
 
         // Bind the right eye's texture to the draw framebuffer.
         self.gl.framebuffer_texture_2d(
@@ -826,9 +832,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             size.width,
             size.height,
             0,
-            size.height,
+            0,//size.height,
             size.width / 2,
-            0,
+            size.height,
             gl::COLOR_BUFFER_BIT,
             gl::NEAREST,
         );
@@ -837,105 +843,18 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         //self.gl.flush();
 
         // Restore old GL bindings.
-        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);*/
+        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
 
-        /*let (texture, resource) = create_texture(
-            &left_view_configuration,
-            &right_view_configuration,
-            &device,
-            format,
-        );*/
-       let texture_desc = d3d11::D3D11_TEXTURE2D_DESC {
-            Width: (size.width / 2) as u32,
-            Height: size.height as u32,
-            Format: dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM,
-            MipLevels: 1,
-            ArraySize: 1,
-            SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: d3d11::D3D11_USAGE_DEFAULT,
-            BindFlags: d3d11::D3D11_BIND_RENDER_TARGET | d3d11::D3D11_BIND_SHADER_RESOURCE,
-            CPUAccessFlags: 0,
-            MiscFlags: d3d11::D3D11_RESOURCE_MISC_SHARED,
-        };
-        let byte_len = (size.width as usize / 2) * size.height as usize * mem::size_of::<u32>();
-        let mut left_data = vec![0xFF; byte_len];
-        /*for pixels in left_data.chunks_mut(mem::size_of::<u32>()) {
-            pixels[0] = 255;
-            pixels[3] = 255;
-        }
-        let mut right_data = vec![0; byte_len];
-        for pixels in right_data.chunks_mut(mem::size_of::<u32>()) {
-            pixels[1] = 255;
-            pixels[3] = 255;
-        }*/
-        let mut init = d3d11::D3D11_SUBRESOURCE_DATA {
-            pSysMem: left_data.as_ptr() as *const _,
-            SysMemPitch: (size.width / 2) as u32 * mem::size_of::<u32>() as u32,
-            SysMemSlicePitch: byte_len as u32,
-        };
-        let mut d3dtex_ptr = ptr::null_mut();
-        let d3d_device = device.d3d11_device();
-        let hr = unsafe { d3d_device.CreateTexture2D(&texture_desc, &init, &mut d3dtex_ptr) };
-        let solid_texture = unsafe { ComPtr::from_raw(d3dtex_ptr) };
-        let solid_resource = solid_texture.up::<d3d11::ID3D11Resource>();
-            assert_eq!(hr, S_OK);
-        /*let (left, right) = unsafe {
-            let hr = d3d_device
-                .CreateTexture2D(&texture_desc, &init, &mut d3dtex_ptr);
-            assert_eq!(hr, S_OK);
-            let left = ComPtr::from_raw(d3dtex_ptr);
-            mem::forget(left.clone());
-            init.pSysMem = right_data.as_ptr() as *const _;
-            let hr = d3d_device
-                .CreateTexture2D(&texture_desc, &init, &mut d3dtex_ptr);
-            assert_eq!(hr, S_OK);
-            let right = ComPtr::from_raw(d3dtex_ptr);
-            mem::forget(right.clone());
-            (
-                left.up::<d3d11::ID3D11Resource>(),
-                right.up::<d3d11::ID3D11Resource>(),
-            )
-        };*/
-        let b = d3d11::D3D11_BOX {
-            left: 0,
-            top: 0,
-            front: 0,
-            right: (size.width / 2) as u32,
-            bottom: size.height as u32,
-            back: 1,
-        };
-       unsafe {
-            // from_raw adopts instead of retaining, so we need to manually addref
-            // alternatively we can just forget after the CopySubresourceRegion call,
-            // since these images are guaranteed to live at least as long as the frame
-            let left_resource = ComPtr::from_raw(left_image).up::<d3d11::ID3D11Resource>();
-            mem::forget(left_resource.clone());
-            let right_resource = ComPtr::from_raw(right_image).up::<d3d11::ID3D11Resource>();
-            mem::forget(right_resource.clone());
-            self.device_context.CopySubresourceRegion(
-                left_resource.as_raw(),
-                0,
-                0,
-                0,
-                0,
-                solid_resource.as_raw(),
-                0,
-                &b,
-            );
-            self.device_context.CopySubresourceRegion(
-                right_resource.as_raw(),
-                0,
-                0,
-                0,
-                0,
-                solid_resource.as_raw(),
-                0,
-                &b,
-            );
-        }
+        /*let right_surface = device
+            .destroy_surface_texture(context, right_surface_texture)
+            .unwrap();*/
+
+        /*let surface = device
+            .destroy_surface_texture(context, surface_texture)
+            .unwrap();*/
+
+        /*device.destroy_surface(context, left_surface).unwrap();
+        device.destroy_surface(context, right_surface).unwrap();*/
 
         self.left_swapchain.release_image().unwrap();
         self.right_swapchain.release_image().unwrap();
@@ -976,22 +895,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             )
             .unwrap();
 
-        /*let surface = device
-            .destroy_surface_texture(context, surface_texture)
-            .unwrap();*/
-        /*let left_surface = device
-            .destroy_surface_texture(context, left_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, left_surface).unwrap();
-
-        let right_surface = device
-            .destroy_surface_texture(context, right_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, right_surface).unwrap();*/
-
-        //let (surfaceless, surface) = surface_texture.into_surfaceless();
+        let (surfaceless, surface) = surface_texture.into_surfaceless();
         //println!("storing cached texture for {:?}", info.id);
-        //self.surface_texture_cache.insert(info.id, Some(surfaceless));
+        self.surface_texture_cache.insert(info.id, Some(surfaceless));
         surface
     }
 
@@ -1039,19 +945,10 @@ impl Drop for OpenXrDevice {
     fn drop(&mut self) {
         let (device, context) = (&mut self.surfman.0, &mut self.surfman.1);
         // FIXME: leaking the cached surfaceless textures because we don't have surfaces
-        /*for surface_texture in self.left_surface_textures.drain(..).chain(self.right_surface_textures.drain(..)) {
+        for surface_texture in self.left_surface_textures.drain(..).chain(self.right_surface_textures.drain(..)) {
             let surface = device.destroy_surface_texture(context, surface_texture).unwrap();
             device.destroy_surface(context, surface).unwrap();
-        };*/
-                /*let left_surface = device
-            .destroy_surface_texture(context, left_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, left_surface).unwrap();*/
-
-        /*let right_surface = device
-            .destroy_surface_texture(context, right_surface_texture)
-            .unwrap();
-        device.destroy_surface(context, right_surface).unwrap();*/
+        };
         let _ = self.surfman.0.destroy_context(&mut self.surfman.1);
     }
 }

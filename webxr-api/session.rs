@@ -247,18 +247,21 @@ where
                 let mut render_start = None;
                 if let Some(ref swap_chain) = self.swap_chain {
                     if let Some(surface) = swap_chain.take_surface() {
-                        //println!("!!! raf render {}", Instant::now());
-                        render_start = Some(time::precise_time_ns());
-                        println!("!!! raf transmitted {}ms", (render_start.unwrap() - sent_time).to_ms());
+                        if cfg!(feature = "profile") {
+                            render_start = Some(time::precise_time_ns());
+                            println!("!!! raf transmitted {}ms", (render_start.unwrap() - sent_time).to_ms());
+                        }
                         let surface = self.device.render_animation_frame(surface);
                         swap_chain.recycle_surface(surface);
                     }
                 }
-                let wait_start = time::precise_time_ns();
-                if let Some(render_start) = render_start {
-                    println!("!!! raf render {}", (wait_start - render_start).to_ms());
+                let mut wait_start = 0;
+                if cfg!(feature = "profile") {
+                    wait_start = time::precise_time_ns();
+                    if let Some(render_start) = render_start {
+                        println!("!!! raf render {}", (wait_start - render_start).to_ms());
+                    }
                 }
-                //println!("!!! raf wait {}", wait_start);
                 let mut frame = match self.device.wait_for_animation_frame() {
                     Some(frame) => frame,
                     None => {
@@ -266,10 +269,11 @@ where
                         return false;
                     }
                 };
-                let wait_end = time::precise_time_ns();
-                println!("!!! raf wait {}", (wait_end - wait_start).to_ms());
-                //println!("!!! raf trigger {:?}", );
-                frame.sent_time = wait_end;
+                if cfg!(feature = "profile") {
+                    let wait_end = time::precise_time_ns();
+                    println!("!!! raf wait {}", (wait_end - wait_start).to_ms());
+                    frame.sent_time = wait_end;
+                }
                 let _ = self.frame_sender.send(frame);
             }
             SessionMsg::Quit => {
@@ -294,7 +298,10 @@ where
 {
     fn run_one_frame(&mut self) {
         let frame_count = self.frame_count;
-        let start_run = time::precise_time_ns();
+        let mut start_run = 0;
+        if cfg!(feature = "profile") {
+            start_run = time::precise_time_ns();
+        }
         while frame_count == self.frame_count && self.running {
             if let Ok(msg) = crate::recv_timeout(&self.receiver, TIMEOUT) {
             //if let Ok(msg) = self.receiver.try_recv() {
@@ -303,8 +310,10 @@ where
                 break;
             }
         }
-        let end_run = time::precise_time_ns();
-        println!("!!! run_one_frame {}ms", (end_run - start_run).to_ms());
+        if cfg!(feature = "profile") {
+            let end_run = time::precise_time_ns();
+            println!("!!! run_one_frame {}ms", (end_run - start_run).to_ms());
+        }
     }
 
     fn running(&self) -> bool {
