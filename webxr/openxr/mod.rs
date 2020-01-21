@@ -215,7 +215,8 @@ struct OpenXrDevice {
     right_surface_textures: Vec<SurfaceTexture>,
     surfman: (SurfmanDevice, SurfmanContext),
     surface_texture_cache: HashMap<SurfaceID, Option<SurfacelessTexture>>,
-    //device_context: ComPtr<ID3D11DeviceContext>,
+    device_context: ComPtr<ID3D11DeviceContext>,
+    format: dxgiformat::DXGI_FORMAT,
 
     // input
     action_set: ActionSet,
@@ -310,7 +311,7 @@ fn init_device_for_adapter(
             D3D_DRIVER_TYPE_UNKNOWN,
             ptr::null_mut(),
             // add d3d11::D3D11_CREATE_DEVICE_DEBUG below for debug output
-            d3d11::D3D11_CREATE_DEVICE_BGRA_SUPPORT /*| d3d11::D3D11_CREATE_DEVICE_DEBUG*/,
+            d3d11::D3D11_CREATE_DEVICE_BGRA_SUPPORT | d3d11::D3D11_CREATE_DEVICE_DEBUG,
             feature_levels.as_ptr(),
             feature_levels.len() as u32,
             d3d11::D3D11_SDK_VERSION,
@@ -532,7 +533,8 @@ impl OpenXrDevice {
             right_image: 0,
             surfman: (device, context),
             surface_texture_cache: HashMap::new(),
-            //device_context,
+            device_context,
+            format,
 
             action_set,
             right_hand,
@@ -711,7 +713,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         device.make_context_current(&context);
         let info = device.surface_info(&surface);
         let size = info.size;
-        let surface_texture = match self.surface_texture_cache.get_mut(&info.id) {
+        /*let surface_texture = match self.surface_texture_cache.get_mut(&info.id) {
             Some(surfaceless) => {
                 //println!("getting cached texture for {:?}", info.id);
                 SurfaceTexture::from_surfaceless(surface, surfaceless.take().unwrap())
@@ -738,7 +740,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             device.surface_gl_texture_target(),
             texture_id,
             0,
-        );
+        );*/
 
         self.left_image = self.left_swapchain.acquire_image().unwrap();
         self.left_swapchain
@@ -751,6 +753,148 @@ impl DeviceAPI<Surface> for OpenXrDevice {
 
         let left_image = self.left_images[self.left_image as usize];
         let right_image = self.right_images[self.right_image as usize];
+        
+        let texture_desc = d3d11::D3D11_TEXTURE2D_DESC {
+            Width: (size.width / 2) as u32,
+            Height: size.height as u32,
+            Format: self.format,
+            MipLevels: 1,
+            ArraySize: 1,
+            SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: d3d11::D3D11_USAGE_DEFAULT,
+            BindFlags: d3d11::D3D11_BIND_RENDER_TARGET | d3d11::D3D11_BIND_SHADER_RESOURCE,
+            CPUAccessFlags: 0,
+            //MiscFlags: d3d11::D3D11_RESOURCE_MISC_SHARED,
+            MiscFlags: 0,
+        };
+        let byte_len = (size.width as usize / 2) * size.height as usize * mem::size_of::<u32>();
+        let mut left_data = vec![0xFF; byte_len];
+        let mut init = d3d11::D3D11_SUBRESOURCE_DATA {
+            pSysMem: left_data.as_ptr() as *const _,
+            SysMemPitch: (size.width / 2) as u32 * mem::size_of::<u32>() as u32,
+            SysMemSlicePitch: byte_len as u32,
+        };
+        let mut d3dtex_ptr = ptr::null_mut();
+        let d3d_device = device.d3d11_device();
+        let hr = unsafe { d3d_device.CreateTexture2D(&texture_desc, &init, &mut d3dtex_ptr) };
+        let solid_texture = unsafe { ComPtr::from_raw(d3dtex_ptr) };
+        let solid_resource = solid_texture.up::<d3d11::ID3D11Resource>();
+        assert_eq!(hr, S_OK);
+
+        /*let b = d3d11::D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: (size.width / 2) as u32,
+            bottom: size.height as u32,
+            back: 1,
+        };*/
+       unsafe {
+            // from_raw adopts instead of retaining, so we need to manually addref
+            // alternatively we can just forget after the CopySubresourceRegion call,
+            // since these images are guaranteed to live at least as long as the frame
+            let left_resource = ComPtr::from_raw(left_image).up::<d3d11::ID3D11Resource>();
+            mem::forget(left_resource.clone());
+            let right_resource = ComPtr::from_raw(right_image).up::<d3d11::ID3D11Resource>();
+            mem::forget(right_resource.clone());
+            self.device_context.CopyResource(left_resource.as_raw(), solid_resource.as_raw());
+            self.device_context.CopyResource(right_resource.as_raw(), solid_resource.as_raw());
+            self.device_context.Flush();
+            /*self.device_context.CopySubresourceRegion(
+                left_resource.as_raw(),
+                0,
+                0,
+                0,
+                0,
+                solid_resource.as_raw(),
+                0,
+                &b,
+            );
+            self.device_context.CopySubresourceRegion(
+                right_resource.as_raw(),
+                0,
+                0,
+                0,
+                0,
+                solid_resource.as_raw(),
+                0,
+                &b,
+            );*/
+        //}
+        
+        let texture_desc = d3d11::D3D11_TEXTURE2D_DESC {
+            Width: (size.width / 2) as u32,
+            Height: size.height as u32,
+            Format: self.format,
+            MipLevels: 1,
+            ArraySize: 1,
+            SampleDesc: dxgitype::DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: d3d11::D3D11_USAGE_STAGING,
+            BindFlags: 0,//d3d11::D3D11_BIND_RENDER_TARGET | d3d11::D3D11_BIND_SHADER_RESOURCE,
+            CPUAccessFlags: d3d11::D3D11_CPU_ACCESS_READ,
+            //MiscFlags: d3d11::D3D11_RESOURCE_MISC_SHARED,
+            MiscFlags: 0,
+        };
+        let initial_data = vec![0xFF0000FFu32; byte_len / mem::size_of::<u32>()];
+        let init = d3d11::D3D11_SUBRESOURCE_DATA {
+            pSysMem: initial_data.as_ptr() as *const _ as *const _,
+            SysMemPitch: (size.width / 2) as u32 * mem::size_of::<u32>() as u32,
+            SysMemSlicePitch: byte_len as u32,
+        };
+        let hr = unsafe { d3d_device.CreateTexture2D(&texture_desc, ptr::null(), &mut d3dtex_ptr) };
+        assert_eq!(hr, S_OK);
+        let solid_texture = unsafe { ComPtr::from_raw(d3dtex_ptr) };
+        let solid_resource = solid_texture.up::<d3d11::ID3D11Resource>();
+        self.device_context.CopyResource(solid_resource.as_raw(), left_resource.as_raw());
+        
+        let mut mapped = d3d11::D3D11_MAPPED_SUBRESOURCE {
+            pData: ptr::null_mut(),
+            RowPitch: 0,
+            DepthPitch: 0,
+        };
+        
+        let hr = self.device_context.Map(solid_resource.as_raw(), 0, d3d11::D3D11_MAP_READ, 0, &mut mapped);
+        assert_eq!(hr, S_OK);
+        assert_eq!(*(mapped.pData as *const u32), 0xFFFFFFFF);
+
+        }
+        
+        /*let handle = surface.handle();
+        let mut resource = ptr::null_mut();
+        unsafe {
+            let hr = device.d3d11_device().OpenSharedResource(
+                surface.handle(), &d3d11::ID3D11Texture2D::uuidof(), &mut resource,
+            );
+            assert_eq!(hr, S_OK);
+        }
+        let resource = unsafe { ComPtr::from_raw(resource as *mut d3d11::ID3D11Resource) };*/
+        
+        /*unsafe {
+            let left_image = ComPtr::from_raw(left_image);
+            mem::forget(left_image.clone());
+            let right_image = ComPtr::from_raw(right_image);
+            mem::forget(right_image.clone());
+            let mut src_box = d3d11::D3D11_BOX {
+                left: 0,
+                top: 0,
+                front: 0,
+                right: (size.width / 2) as u32,
+                bottom: size.height as u32,
+                back: 1,
+            };
+            self.device_context.CopySubresourceRegion(left_image.up::<d3d11::ID3D11Resource>().as_raw(), 0, 0, 0, 0, resource.as_raw(), 0, &src_box);
+            src_box.left = (size.width / 2) as u32;
+            src_box.right = size.width as u32;
+            self.device_context.CopySubresourceRegion(right_image.up::<d3d11::ID3D11Resource>().as_raw(), 0, 0, 0, 0, resource.as_raw(), 0, &src_box);
+
+            self.device_context.Flush();
+        }*/
 
         /*let left_surface = unsafe {
             device
@@ -764,7 +908,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let left_surface_texture = device
             .create_surface_texture(context, left_surface)
             .expect("couldn't create left surface texture");*/
-        let left_texture_id = self.left_surface_textures[self.left_image as usize].gl_texture();
+        //let left_texture_id = self.left_surface_textures[self.left_image as usize].gl_texture();
         //let left_texture_id = left_surface_texture.gl_texture();
 
         /*let right_surface = unsafe {
@@ -780,9 +924,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             .create_surface_texture(context, right_surface)
             .expect("couldn't create right surface texture");*/
         //let right_texture_id = right_surface_texture.gl_texture();
-        let right_texture_id = self.right_surface_textures[self.right_image as usize].gl_texture();
+        //let right_texture_id = self.right_surface_textures[self.right_image as usize].gl_texture();
 
-        self.gl
+        /*self.gl
             .bind_framebuffer(gl::DRAW_FRAMEBUFFER, self.write_fbo);
 
         // Bind the left eye's texture to the draw framebuffer.
@@ -808,7 +952,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             gl::COLOR_BUFFER_BIT,
             gl::NEAREST,
         );
-        debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);*/
 
         /*let left_surface = device
             .destroy_surface_texture(context, left_surface_texture)
@@ -817,7 +961,7 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         //device.make_context_current(&context);
 
         // Bind the right eye's texture to the draw framebuffer.
-        self.gl.framebuffer_texture_2d(
+        /*self.gl.framebuffer_texture_2d(
             gl::DRAW_FRAMEBUFFER,
             gl::COLOR_ATTACHMENT0,
             device.surface_gl_texture_target(),
@@ -838,12 +982,12 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             gl::COLOR_BUFFER_BIT,
             gl::NEAREST,
         );
-        debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);
+        debug_assert_eq!(self.gl.get_error(), gl::NO_ERROR);*/
 
         //self.gl.flush();
 
         // Restore old GL bindings.
-        self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
+        //self.gl.bind_framebuffer(gl::FRAMEBUFFER, old_framebuffer);
 
         /*let right_surface = device
             .destroy_surface_texture(context, right_surface_texture)
@@ -895,9 +1039,9 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             )
             .unwrap();
 
-        let (surfaceless, surface) = surface_texture.into_surfaceless();
+       // let (surfaceless, surface) = surface_texture.into_surfaceless();
         //println!("storing cached texture for {:?}", info.id);
-        self.surface_texture_cache.insert(info.id, Some(surfaceless));
+        //self.surface_texture_cache.insert(info.id, Some(surfaceless));
         surface
     }
 
