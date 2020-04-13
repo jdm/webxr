@@ -94,10 +94,11 @@ impl Drop for OpenXrDevice {
         // but it isn't, presumably because there's an extra handle floating
         // around somewhere
         // XXXManishearth find out where that extra handle is
-        unsafe {
-            (self.instance.fp().destroy_session)(self.session.as_raw());
-            (self.instance.fp().destroy_instance)(self.instance.as_raw());
-        }
+        //unsafe {
+            //(self.instance.fp().destroy_session)(self.session.as_raw());
+            //(self.instance.fp().destroy_instance)(self.instance.as_raw());
+        //}
+        self.shared_data.lock().unwrap().cleanup();
     }
 }
 
@@ -215,17 +216,25 @@ struct OpenXrDevice {
 struct SharedData {
     openxr_views: Vec<openxr::View>,
     frame_state: Option<FrameState>,
-    frame_stream: FrameStream<D3D11>,
+    frame_stream: Option<FrameStream<D3D11>>,
+    swapchain: Option<Swapchain<D3D11>>,
     left_extent: Extent2Di,
     right_extent: Extent2Di,
-    space: Space,
+    space: Option<Space>,
+}
+
+impl SharedData {
+    fn cleanup(&mut self) {
+        self.frame_stream = None;
+        self.swapchain = None;
+        self.space = None;
+    }
 }
 
 struct OpenXrProvider {
     images: Box<[<D3D11 as Graphics>::SwapchainImage]>,
     image_queue: Vec<usize>,
     surfaces: Box<[Option<Surface>]>,
-    swapchain: Swapchain<D3D11>,
     shared_data: Arc<Mutex<SharedData>>,
     fake_surface: Option<Surface>,
     blend_mode: EnvironmentBlendMode,
@@ -246,7 +255,10 @@ impl SurfaceProvider for OpenXrProvider {
         // in preparation for displaying it.
         let mut data = self.shared_data.lock().unwrap();
         let data = &mut *data;
-        self.swapchain.release_image().unwrap();
+        match data.swapchain {
+            Some(ref mut swapchain) => swapchain.release_image().unwrap(),
+            None => return,
+        }
 
         // Invert the up/down angles so that openxr flips the texture in the y axis.
         let mut l_fov = data.openxr_views[0].fov;
@@ -260,7 +272,7 @@ impl SurfaceProvider for OpenXrProvider {
                 .fov(l_fov)
                 .sub_image(
                     openxr::SwapchainSubImage::new()
-                        .swapchain(&self.swapchain)
+                        .swapchain(&data.swapchain.as_ref().unwrap())
                         .image_array_index(0)
                         .image_rect(openxr::Rect2Di {
                             offset: openxr::Offset2Di { x: 0, y: 0 },
@@ -272,7 +284,7 @@ impl SurfaceProvider for OpenXrProvider {
                 .fov(r_fov)
                 .sub_image(
                     openxr::SwapchainSubImage::new()
-                        .swapchain(&self.swapchain)
+                        .swapchain(&data.swapchain.as_ref().unwrap())
                         .image_array_index(0)
                         .image_rect(openxr::Rect2Di {
                             offset: openxr::Offset2Di {
@@ -285,11 +297,13 @@ impl SurfaceProvider for OpenXrProvider {
         ];
 
         let layers = [&*CompositionLayerProjection::new()
-            .space(&data.space)
+            .space(&data.space.as_ref().unwrap())
             .layer_flags(CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA)
             .views(&views[..])];
 
         data.frame_stream
+            .as_mut()
+            .unwrap()
             .end(
                 data.frame_state.as_ref().unwrap().predicted_display_time,
                 self.blend_mode,
@@ -310,10 +324,16 @@ impl SurfaceProvider for OpenXrProvider {
         _context_id: surfman::ContextID,
         size: euclid::default::Size2D<i32>,
     ) -> Result<Surface, surfman::Error> {
-        let image = self.swapchain.acquire_image().unwrap();
-        self.swapchain
-            .wait_image(openxr::Duration::INFINITE)
-            .unwrap();
+        let image = match self.shared_data.lock().unwrap().swapchain.as_mut() {
+            Some(swapchain) => {
+                let image = swapchain.acquire_image().unwrap();
+                swapchain
+                    .wait_image(openxr::Duration::INFINITE)
+                    .unwrap();
+                image
+            }
+            None => return Err(surfman::Error::UnsupportedOnThisPlatform),
+        };
 
         // Store the current image index that was acquired in the queue of
         // surfaces that have been handed out.
@@ -536,16 +556,16 @@ impl OpenXrDevice {
         }
 
         let shared_data = Arc::new(Mutex::new(SharedData {
-            frame_stream,
+            frame_stream: Some(frame_stream),
+            swapchain: Some(swapchain),
             frame_state: None,
-            space,
+            space: Some(space),
             openxr_views: vec![],
             left_extent,
             right_extent,
         }));
 
         let provider = Box::new(OpenXrProvider {
-            swapchain,
             image_queue: Vec::with_capacity(images.len()),
             images: images.into_boxed_slice(),
             surfaces: surfaces.into_boxed_slice(),
@@ -733,6 +753,8 @@ impl DeviceAPI<Surface> for OpenXrDevice {
         let time_ns = time::precise_time_ns();
 
         data.frame_stream
+            .as_mut()
+            .unwrap()
             .begin()
             .expect("failed to start frame stream");
 
@@ -742,13 +764,13 @@ impl DeviceAPI<Surface> for OpenXrDevice {
             .locate_views(
                 ViewConfigurationType::PRIMARY_STEREO,
                 frame_state.predicted_display_time,
-                &data.space,
+                data.space.as_ref().unwrap(),
             )
             .expect("error locating views");
         data.openxr_views = views;
         let pose = self
             .viewer_space
-            .locate(&data.space, frame_state.predicted_display_time)
+            .locate(&data.space.as_ref().unwrap(), frame_state.predicted_display_time)
             .unwrap();
         let transform = transform(&pose.pose);
 
@@ -758,10 +780,10 @@ impl DeviceAPI<Surface> for OpenXrDevice {
 
         let mut right = self
             .right_hand
-            .frame(&self.session, &frame_state, &data.space, &transform);
+            .frame(&self.session, &frame_state, &data.space.as_ref().unwrap(), &transform);
         let mut left = self
             .left_hand
-            .frame(&self.session, &frame_state, &data.space, &transform);
+            .frame(&self.session, &frame_state, &data.space.as_ref().unwrap(), &transform);
 
         data.frame_state = Some(frame_state);
         // views() needs to reacquire the lock.
